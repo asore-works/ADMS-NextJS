@@ -1,12 +1,11 @@
 # app/api/v1/endpoints/users.py
-from typing import Any, List
-from fastapi import APIRouter, Body, Depends, HTTPException
-from fastapi.encoders import jsonable_encoder
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+from typing import Any, List
+from app import crud
 from app.api import deps
-from app.core.security import get_password_hash
+from app.schemas.user import User as UserSchema, UserCreate, UserUpdate
 from app.models.user import User
-from app.schemas.user import UserCreate, UserUpdate, User as UserSchema
 
 router = APIRouter()
 
@@ -30,23 +29,13 @@ async def create_user(
     user_in: UserCreate,
 ) -> Any:
     """Create new user."""
-    user = db.query(User).filter(User.email == user_in.email).first()
+    user = crud.get_user_by_email(db, email=user_in.email)
     if user:
         raise HTTPException(
             status_code=400,
             detail="The user with this email already exists in the system.",
         )
-
-    user = User(
-        email=user_in.email,
-        hashed_password=get_password_hash(user_in.password),
-        first_name=user_in.first_name,
-        last_name=user_in.last_name,
-        phone_number=user_in.phone_number,
-    )
-    db.add(user)
-    db.commit()
-    db.refresh(user)
+    user = crud.create_user(db, user_in=user_in)
     return user
 
 
@@ -56,3 +45,25 @@ async def read_user_me(
 ) -> Any:
     """Get current user."""
     return current_user
+
+
+@router.put("/{user_id}", response_model=UserSchema)
+async def update_user(
+    user_id: str,
+    user_in: UserUpdate,
+    current_user: User = Depends(deps.get_current_user),
+    db: Session = Depends(deps.get_db),
+) -> Any:
+    """Update user profile."""
+    if str(current_user.id) != user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only update your own profile",
+        )
+
+    user = crud.get_user(db, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user = crud.update_user(db, user=user, user_in=user_in)
+    return user
